@@ -1,0 +1,33 @@
+{{- if .Values.ingress.enabled }}
+# The AWS Load Balancer Controller turns this into an internet-facing ALB.
+# COST: an ALB is ~$0.55/day + LCUs while it exists. down.sh deletes it before destroying the VPC.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "app.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    # Route straight to pod IPs (no NodePort on the nodes; works with the NetworkPolicy's VPC rule).
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+    alb.ingress.kubernetes.io/inbound-cidrs: {{ .Values.ingress.inboundCidrs | quote }}
+    # Drop requests with malformed header names instead of forwarding them (request-smuggling hardening).
+    alb.ingress.kubernetes.io/load-balancer-attributes: routing.http.drop_invalid_header_fields.enabled=true
+    alb.ingress.kubernetes.io/tags: {{ .Values.ingress.tags | quote }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "app.name" . }}
+                port:
+                  name: http
+{{- end }}

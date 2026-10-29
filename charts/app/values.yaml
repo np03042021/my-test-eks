@@ -1,0 +1,71 @@
+# Values for the spr-app chart. values.schema.json enforces the security-relevant ones:
+# Helm refuses to render if, for example, the digest is malformed or replicas drops below 2.
+
+image:
+  # ECR repository created by the infra repo's bootstrap stack.
+  repository: 521827759544.dkr.ecr.ap-south-1.amazonaws.com/secure-paved-road-app
+  # Deployed by digest, never by tag. release.yml (Phase 6) writes the digest of the image it just
+  # built and scanned; Argo CD then deploys exactly those bytes. Empty until the first release,
+  # so the chart refuses to render (fail closed) rather than deploy an unknown image.
+  digest: ""
+  # With a digest the bytes can't change; Always only re-checks the manifest and re-authorises the pull.
+  pullPolicy: Always
+
+# Two replicas spread across the two Spot nodes, so one Spot interruption never takes the service down.
+replicaCount: 2
+
+# Created by the chart with Pod Security Standards "restricted" enforced (Argo CD's AppProject allows
+# Namespace as the only cluster-scoped kind). Pinned PSS version, so a cluster upgrade can't silently
+# change what "restricted" means.
+namespace:
+  create: true
+  podSecurityVersion: v1.36
+
+# The app's fixed non-root identity; matches USER 65532:65532 in the Dockerfile.
+podSecurity:
+  uid: 65532
+  gid: 65532
+
+# Sized for t3/t3a.medium Spot nodes shared with Argo CD, ESO and the LB controller.
+# Memory request = limit: the JVM heap is 75% of the limit (MaxRAMPercentage), and the pod can't be
+# OOM-killed for using memory it was promised.
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# JAVA_TOOL_OPTIONS is not needed: JVM flags are in the image ENTRYPOINT.
+env: {}
+
+service:
+  port: 80
+
+externalSecret:
+  # Created by the infra repo (k8s-bootstrap/cluster-secret-store.yaml); only serves the spr-app namespace.
+  storeName: aws-secrets-manager
+  remoteKey: spr/demo
+  # Least privilege applies to data too: sync only the keys the app uses. spr/demo also holds API_TOKEN,
+  # which this app doesn't need, so it never lands in the cluster.
+  keys:
+    - GREETING_PREFIX
+  refreshInterval: 1h
+
+ingress:
+  enabled: true
+  className: alb
+  # HTTP only. DEMO ONLY: production adds an ACM certificate, listens on 443 and redirects 80 -> 443.
+  # Who may reach the ALB. DEMO ONLY: open to the internet for the smoke test; restrict to known CIDRs
+  # (or put CloudFront/WAF in front) in production.
+  inboundCidrs: 0.0.0.0/0
+  tags: Project=secure-paved-road,Environment=demo
+
+networkPolicy:
+  # Ingress to the app port is allowed only from inside the VPC: the ALB's ENIs (target-type ip) and the
+  # nodes (kubelet probes) both live there. The internet reaches the ALB, never the pods directly.
+  # DEMO ONLY limitation: pods share the public subnets with the ALB, so this CIDR also matches other pods'
+  # IPs. Production: separate pod subnets (VPC CNI custom networking) so only the ALB subnets are allowed,
+  # or Security Groups for Pods.
+  ingressCidr: 10.30.0.0/16

@@ -1,0 +1,13 @@
+# BASELINE ONLY - DO NOT DEPLOY. A typical "it works" Dockerfile, kept for the before/after comparison
+# (scripts/compare-images.sh) and the Phase 8 "root, non-distroless image" demo. Its anti-patterns:
+#   - full Maven + JDK + Ubuntu userland in the runtime image (shell, package manager, compilers)
+#   - mutable tag, no digest pin
+#   - COPY . . with no effective .dockerignore (see Dockerfile.before.dockerignore): .git history goes in
+#   - runs as root
+#   - source code and build output shipped together
+FROM maven:3.9-eclipse-temurin-21
+WORKDIR /app
+COPY . .
+RUN mvn -B package -DskipTests
+EXPOSE 8080
+CMD ["java", "-jar", "target/secure-paved-road-app-0.1.0-SNAPSHOT.jar"]

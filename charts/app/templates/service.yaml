@@ -1,0 +1,18 @@
+# ClusterIP only: nothing is exposed by the Service itself. The ALB (target-type ip) sends traffic
+# straight to pod IPs; the Ingress still needs this Service to discover the endpoints.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "app.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "app.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

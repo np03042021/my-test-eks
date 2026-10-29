@@ -1,0 +1,8 @@
+apiVersion: v2
+name: spr-app
+description: Secure Paved Road demo service, hardened by default (PSS restricted, default-deny network, secrets from AWS)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+# preStop.sleep (used for ALB deregistration) needs a recent cluster; the demo runs 1.36.
+kubeVersion: ">=1.33.0-0"

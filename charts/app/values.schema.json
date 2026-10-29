@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "spr-app values",
+  "description": "Guardrails: Helm refuses to render values that would weaken the paved road.",
+  "type": "object",
+  "required": ["image", "replicaCount", "podSecurity", "resources", "externalSecret", "networkPolicy"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "digest", "pullPolicy"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "type": "string",
+          "description": "Must be the private ECR repo; no Docker Hub or other public registries.",
+          "pattern": "^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9._/-]+$"
+        },
+        "digest": {
+          "type": "string",
+          "description": "Image digest written by release.yml. Tags are not accepted.",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent"] }
+      }
+    },
+    "replicaCount": { "type": "integer", "minimum": 2, "description": "At least 2, so the PodDisruptionBudget can be honoured." },
+    "namespace": {
+      "type": "object",
+      "properties": {
+        "create": { "type": "boolean" },
+        "podSecurityVersion": { "type": "string", "pattern": "^(latest|v1\\.[0-9]+)$" }
+      }
+    },
+    "podSecurity": {
+      "type": "object",
+      "required": ["uid", "gid"],
+      "properties": {
+        "uid": { "type": "integer", "minimum": 10000, "description": "High, non-root UID (never 0, avoids host UID clashes)." },
+        "gid": { "type": "integer", "minimum": 10000 }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "type": "object", "required": ["cpu", "memory"] },
+        "limits": { "type": "object", "required": ["cpu", "memory"] }
+      }
+    },
+    "env": {
+      "type": "object",
+      "description": "Plain, non-secret environment variables only.",
+      "propertyNames": { "not": { "pattern": "(?i)(secret|token|password|key)" } },
+      "additionalProperties": { "type": "string" }
+    },
+    "service": {
+      "type": "object",
+      "properties": { "port": { "type": "integer" } }
+    },
+    "externalSecret": {
+      "type": "object",
+      "required": ["storeName", "remoteKey", "keys"],
+      "properties": {
+        "storeName": { "type": "string" },
+        "remoteKey": { "type": "string" },
+        "keys": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" } },
+        "refreshInterval": { "type": "string" }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "inboundCidrs": { "type": "string" },
+        "tags": { "type": "string" }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "required": ["ingressCidr"],
+      "properties": {
+        "ingressCidr": {
+          "type": "string",
+          "description": "Never the whole internet: pods are only reachable from inside the VPC.",
+          "not": { "enum": ["0.0.0.0/0", "::/0"] }
+        }
+      }
+    }
+  }
+}

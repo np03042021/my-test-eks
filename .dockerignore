@@ -1,0 +1,5 @@
+# Allow-list: ignore everything, then let in only what the build needs.
+# New files (keys, .env, notes, .git history) are excluded by default instead of leaking by default.
+*
+!pom.xml
+!src/

@@ -1,0 +1,19 @@
+# Build output
+target/
+
+# IDEs / OS
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Local env files may hold real values; never commit them.
+.env
+.env.*
+
+# Scanner output
+*.sarif
+
+# Local-only project notes (personal details, interview prep)
+CLAUDE.md
+notes/

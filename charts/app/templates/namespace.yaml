@@ -1,0 +1,18 @@
+{{- if .Values.namespace.create }}
+# Pod Security Standards "restricted" in all three modes:
+#   enforce - the API server rejects non-compliant pods (privileged, root, hostPath, extra capabilities, ...)
+#   audit   - violations are recorded in the EKS audit log (enabled in the infra repo)
+#   warn    - kubectl/Argo CD show a warning to whoever applies a violating object
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: {{ .Values.namespace.podSecurityVersion }}
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: {{ .Values.namespace.podSecurityVersion }}
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: {{ .Values.namespace.podSecurityVersion }}
+{{- end }}

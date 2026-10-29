@@ -1,0 +1,3 @@
+# BuildKit uses <Dockerfile-name>.dockerignore instead of the root .dockerignore for this baseline build.
+# Deliberately near-empty to show what "COPY . ." picks up without an allow-list.
+target/

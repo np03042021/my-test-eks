@@ -1,0 +1,61 @@
+# Enforced by the VPC CNI network policy agent (enableNetworkPolicy=true in the infra repo).
+#
+# 1) Default deny: every pod in this namespace, all ingress and all egress, unless allowed below.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress", "Egress"]
+---
+# 2) DNS only: pods in this namespace may resolve names via CoreDNS, and nothing else.
+#    The app makes no outbound calls at all; its secret arrives as a Kubernetes Secret, fetched by ESO.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# 3) The app port, only from inside the VPC (ALB ENIs and kubelet probes). See values.yaml for the
+#    DEMO ONLY caveat about pods sharing subnets with the ALB.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-http-from-vpc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.networkPolicy.ingressCidr }}
+      ports:
+        - protocol: TCP
+          port: 8080
