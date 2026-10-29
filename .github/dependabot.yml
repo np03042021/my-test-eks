@@ -1,0 +1,31 @@
+# Dependabot version updates. Security updates are also enabled in the repo settings.
+# Every update arrives as a PR, so it goes through the same ci gates as any other change.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    # Wait a week before proposing a brand-new release: most hijacked packages are caught and pulled within days.
+    cooldown:
+      default-days: 7
+    groups:
+      spring-boot:
+        patterns: ["org.springframework.boot:*"]
+    open-pull-requests-limit: 5
+
+  # Base images in the Dockerfile are tag@sha256 pins; Dependabot bumps both the tag and the digest.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # Actions are pinned to full commit SHAs with a version comment; Dependabot updates both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

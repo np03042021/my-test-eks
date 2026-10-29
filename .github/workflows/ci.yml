@@ -1,0 +1,203 @@
+name: ci
+
+# Every pull request and every push to main runs all gates. The job names below are the required
+# status checks in the main-branch ruleset, so a PR can't merge unless all of them pass.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    # The release job's digest-only commit must not trigger ci again (that would start a release loop).
+    # PRs still run every gate, even when they only touch values.yaml.
+    paths-ignore:
+      - charts/app/values.yaml
+
+# Default for every job: no token permissions. Each job opts in to exactly what it needs.
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Cancel superseded PR runs; never cancel a main run (release.yml waits for it).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TRIVY_NO_PROGRESS: "true"
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: a secret removed in a later commit is still leaked
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: "false"
+          GITLEAKS_VERSION: "8.30.1" # pin the scanner, not just the action (same as local pre-commit)
+
+  maven-verify:
+    name: maven-verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      # Compile, 38 JUnit 5 tests, JaCoCo report and the 80% line-coverage gate.
+      # mvnw downloads Maven 3.10.0 and refuses it unless the SHA-256 matches.
+      - name: mvnw verify
+        run: ./mvnw -B -ntp verify
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f target/site/jacoco/jacoco.csv ]; then
+            awk -F, 'NR>1 {m+=$8; c+=$9} END {printf "### JaCoCo line coverage: %.1f%% (%d/%d)\n", 100*c/(m+c), c, m+c}' \
+              target/site/jacoco/jacoco.csv >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  codeql:
+    name: codeql
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload results to the Security tab
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended # broader security queries than the default suite
+      - name: Build for CodeQL
+        run: ./mvnw -B -ntp -DskipTests compile
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: codeql-java
+
+  trivy-fs:
+    name: trivy-fs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      # Resolve the dependency tree into ~/.m2 first. Otherwise Trivy fetches every transitive POM from Maven
+      # Central itself, and the shared runner IP gets rate-limited (the first CI run failed exactly that way).
+      - name: Resolve Maven dependencies
+        run: ./mvnw -B -ntp -q dependency:resolve
+      - name: Install Trivy (hash-pinned)
+        run: scripts/ci/install-tools.sh trivy
+      # SCA on the Maven dependency tree (pom.xml), before anything is built.
+      - name: Trivy filesystem scan (SARIF)
+        run: trivy fs --scanners vuln --ignorefile .trivyignore.yaml --format sarif --output trivy-fs.sarif .
+      - name: Upload SARIF
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+      # Gate: fail on HIGH/CRITICAL that have a fix available.
+      - name: Trivy filesystem gate
+        run: trivy fs --scanners vuln --ignorefile .trivyignore.yaml --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+
+  chart:
+    name: chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Helm and kubeconform (hash-pinned)
+        run: scripts/ci/install-tools.sh helm kubeconform
+      # helm lint --strict, render, kubeconform against Kubernetes 1.36, and the values-schema guardrail tests.
+      - name: Validate chart
+        run: SKIP_CHECKOV=1 scripts/validate-chart.sh
+
+  checkov:
+    name: checkov
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Helm (hash-pinned)
+        run: scripts/ci/install-tools.sh helm
+      # Checkov can't parse raw Helm templates, so scan what Kubernetes would actually receive.
+      - name: Render chart
+        run: |
+          mkdir -p target/chart
+          helm template spr-app charts/app --namespace spr-app \
+            --set image.digest="sha256:$(printf '0%.0s' {1..64})" > target/chart/rendered.yaml
+      - name: Checkov (Dockerfile, rendered chart, workflows)
+        uses: bridgecrewio/checkov-action@c3e106d5f8f4253a6de5110efb41a080f83db294 # v12.3135.0 (checkov 3.3.30)
+        with:
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,results.sarif
+      - name: Upload SARIF
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: results.sarif
+          category: checkov
+
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install hadolint and Trivy (hash-pinned)
+        run: scripts/ci/install-tools.sh hadolint trivy
+      - name: hadolint
+        run: hadolint Dockerfile
+      - name: Trivy Dockerfile misconfiguration scan
+        run: trivy config --ignorefile .trivyignore.yaml --exit-code 1 Dockerfile
+      # Same build as release.yml: linux/amd64 for the t3/t3a EKS nodes. Not pushed from CI.
+      - name: Build image
+        run: docker buildx build --platform linux/amd64 --tag spr-app:ci --load .
+      - name: Trivy image scan (SARIF)
+        run: trivy image --scanners vuln --ignorefile .trivyignore.yaml --format sarif --output trivy-image.sarif spr-app:ci
+      - name: Upload SARIF
+        if: success() || failure()
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+      # Gate: HIGH/CRITICAL with a fix available fail the build. Unfixed ones are reported, not blocking.
+      - name: Trivy image gate
+        run: trivy image --scanners vuln --ignorefile .trivyignore.yaml --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 spr-app:ci

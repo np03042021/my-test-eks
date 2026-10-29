@@ -28,8 +28,11 @@ kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
   -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
   "$OUT/rendered.yaml"
 
-log "Checkov on the rendered manifests"
-checkov -f "$OUT/rendered.yaml" --framework kubernetes --compact --quiet
+# CI runs Checkov in its own job (with SARIF upload) and sets SKIP_CHECKOV=1 here.
+if [[ "${SKIP_CHECKOV:-0}" != "1" ]]; then
+  log "Checkov on the rendered manifests"
+  checkov -f "$OUT/rendered.yaml" --framework kubernetes --compact --quiet
+fi
 
 log "Guardrails: values.schema.json must reject unsafe values"
 expect_reject() {  # usage: expect_reject <description> <helm --set args...>

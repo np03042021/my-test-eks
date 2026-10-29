@@ -1,0 +1,136 @@
+name: release
+
+# Runs only after ci succeeds for a push to main, and only after YOU approve the "production" environment.
+#
+# How it fits branch protection:
+#   The main ruleset requires a PR and all 7 ci checks for everyone. Its only bypass is "deploy keys", and the
+#   repo has exactly one: a write key whose private half is stored ONLY as a secret of the "production"
+#   environment. So the key is usable only by this job, only on main, and only after a human approves.
+#   (GitHub doesn't allow the GitHub Actions app itself as a ruleset bypass on personal-account repos.)
+#
+# Why the digest commit doesn't start a loop:
+#   Unlike GITHUB_TOKEN pushes, deploy-key pushes DO trigger workflows. Two guards stop the cycle:
+#   1. ci.yml ignores pushes to main that only change charts/app/values.yaml, so no ci run, no release.
+#   2. This job skips any commit whose message starts with "chore(release):" (belt and braces).
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+# One release at a time; a queued one waits instead of being cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      !startsWith(github.event.workflow_run.head_commit.message, 'chore(release):')
+    runs-on: ubuntu-latest
+    environment: production # required reviewer: np03042021
+    permissions:
+      contents: read # the digest commit is pushed with the deploy key, not GITHUB_TOKEN
+      id-token: write # GitHub OIDC token -> AWS STS; no AWS keys stored anywhere
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      TRIVY_NO_PROGRESS: "true"
+    steps:
+      # Build exactly the commit ci tested, not whatever main is now.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          # Deploy key (production environment secret) so the digest commit can bypass the PR rule.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          persist-credentials: true # needed for the digest commit; this is the only job that keeps it
+
+      - name: Install Trivy (hash-pinned)
+        run: scripts/ci/install-tools.sh trivy
+
+      # Assumes github-actions-ecr-push. Its trust policy accepts only
+      # repo:np03042021/secure-paved-road-eks:environment:production, and it can push to one ECR repo only.
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: release-${{ github.run_id }}
+
+      - name: Log in to ECR (short-lived token)
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "${ECR_REPOSITORY%%/*}"
+
+      # ECR tags are IMMUTABLE: if this commit was already released (e.g. a re-run), reuse that image.
+      - name: Check for an existing image
+        id: existing
+        run: |
+          repo="${ECR_REPOSITORY#*/}"
+          digest="$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag="$SHA" \
+            --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || true)"
+          if [[ "$digest" == sha256:* ]]; then
+            echo "Image for $SHA already exists: $digest"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build image (linux/amd64)
+        if: steps.existing.outputs.digest == ''
+        run: docker buildx build --platform linux/amd64 --tag "$ECR_REPOSITORY:$SHA" --load .
+
+      # Scan the exact image that will be pushed. Same gate as ci: HIGH/CRITICAL with a fix fails the release.
+      - name: Trivy gate on the release image
+        if: steps.existing.outputs.digest == ''
+        run: |
+          trivy image --scanners vuln --ignorefile .trivyignore.yaml \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$ECR_REPOSITORY:$SHA"
+
+      - name: Push image
+        if: steps.existing.outputs.digest == ''
+        run: docker push "$ECR_REPOSITORY:$SHA"
+
+      # Read the digest from ECR itself (the registry's view of what was stored).
+      - name: Resolve digest
+        id: digest
+        run: |
+          digest="${{ steps.existing.outputs.digest }}"
+          if [[ -z "$digest" ]]; then
+            digest="$(aws ecr describe-images --repository-name "${ECR_REPOSITORY#*/}" --image-ids imageTag="$SHA" \
+              --query 'imageDetails[0].imageDigest' --output text)"
+          fi
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "Unexpected digest: $digest"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Released image"
+            echo '```'
+            echo "$ECR_REPOSITORY@$digest"
+            echo "tag: $SHA"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Argo CD watches charts/app on main: this commit is the deployment.
+      - name: Commit digest to charts/app/values.yaml
+        env:
+          DIGEST: ${{ steps.digest.outputs.digest }}
+        run: |
+          git fetch origin main
+          # If main has moved on, a newer ci run will release a newer commit; don't deploy an older image over it.
+          if [[ "$(git rev-parse origin/main)" != "$SHA" ]]; then
+            echo "::notice::main moved past $SHA; skipping the digest commit (a newer release will follow)."
+            exit 0
+          fi
+          git checkout -B main origin/main
+          sed -i -E "s|^(  digest: ).*|\1\"${DIGEST}\"|" charts/app/values.yaml
+          grep -q "^  digest: \"${DIGEST}\"$" charts/app/values.yaml || { echo "digest line not updated"; exit 1; }
+          if git diff --quiet; then
+            echo "values.yaml already has ${DIGEST}"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): deploy ${SHA::7} (${DIGEST::19})"
+          git push origin HEAD:main
