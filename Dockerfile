@@ -57,5 +57,5 @@ EXPOSE 8080
 # No secrets here or in any layer: GREETING_PREFIX arrives at runtime from the Kubernetes Secret.
 # MaxRAMPercentage sizes the heap from the container memory limit; ExitOnOutOfMemoryError lets
 # Kubernetes restart a broken JVM instead of leaving it half-alive.
-# checkov:skip=CKV_DOCKER_2:No HEALTHCHECK by design: distroless has no shell or curl, and Kubernetes liveness/readiness probes on /actuator/health/* do this job.
+# checkov:skip=CKV_DOCKER_2:No HEALTHCHECK by design: distroless has no shell or curl; Kubernetes probes on /actuator/health/* do this job. Owner np03042021, review by 2027-04-30.
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]

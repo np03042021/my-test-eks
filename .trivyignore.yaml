@@ -1,0 +1,16 @@
+# Trivy suppressions. Policy: fix first; suppress only with a reason, an owner and an expiry date.
+# expired_at makes Trivy report the finding again after that date, forcing a re-review.
+# Used with --ignorefile .trivyignore.yaml in ci.yml and release.yml.
+#
+# Not listed on purpose: unfixed OS CVEs (e.g. libuuid1 in the distroless Debian 13 base). The gates use
+# --ignore-unfixed, so they are reported in the Security tab but don't block; Dependabot bumps the base
+# image digest when Debian ships a fix.
+
+misconfigurations:
+  - id: DS-0026
+    paths:
+      - Dockerfile
+    statement: >-
+      No HEALTHCHECK by design: distroless has no shell or curl, and Kubernetes liveness/readiness probes
+      on /actuator/health/* do this job. Owner: np03042021. Review by the expiry date.
+    expired_at: 2027-04-30

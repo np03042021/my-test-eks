@@ -91,4 +91,29 @@ Deployed by Argo CD from this repo (path `charts/app`, branch `main`) into the `
 ./scripts/validate-chart.sh   # helm lint --strict, render, kubeconform (K8s 1.36), Checkov, guardrail tests
 ```
 
-Coming next: GitHub Actions CI/release (Phase 6), Jenkins shared library (Phase 7).
+## Pipelines
+
+**[ci.yml](.github/workflows/ci.yml)** runs on every PR and push to `main`. Each job is a required status check:
+
+| Job | Gate |
+|---|---|
+| `gitleaks` | secrets in the full git history (gitleaks 8.30.1 pinned) |
+| `maven-verify` | 38 JUnit 5 tests and the JaCoCo 80% line-coverage gate |
+| `codeql` | CodeQL `security-extended` for Java |
+| `trivy-fs` | SCA on the Maven dependencies: HIGH/CRITICAL with a fix fails |
+| `chart` | `helm lint --strict`, kubeconform against Kubernetes 1.36, values-schema guardrail tests |
+| `checkov` | Dockerfile, rendered chart and workflows |
+| `image` | hadolint, Trivy Dockerfile config, linux/amd64 build, Trivy image gate (HIGH/CRITICAL with a fix fails) |
+
+**[release.yml](.github/workflows/release.yml)** runs after `ci` succeeds on `main`, in the `production`
+environment (manual approval). It assumes `github-actions-ecr-push` through OIDC, builds and Trivy-scans the exact
+image, pushes it tagged with the commit SHA, reads the digest back from ECR, and commits it to
+`charts/app/values.yaml`. Argo CD deploys that commit.
+
+Supply-chain controls: every action is pinned to a full commit SHA (enforced by the repo setting), CLI tools are
+installed from hash-pinned binaries ([scripts/ci/install-tools.sh](scripts/ci/install-tools.sh)), all jobs start
+from `permissions: {}`, and Dependabot (with a 7-day cooldown) proposes updates for Maven, Docker base images and
+actions. Suppressions live in [.trivyignore.yaml](.trivyignore.yaml) and [.checkov.yaml](.checkov.yaml), each with
+a reason, an owner and an expiry.
+
+Coming next: Jenkins shared library (Phase 7).

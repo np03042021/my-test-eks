@@ -1,0 +1,18 @@
+# Checkov config. Run locally after rendering the chart (scripts/validate-chart.sh does both):
+#   checkov --config-file .checkov.yaml
+# Policy: fix first, suppress second. Resource-specific suppressions live inline next to the resource with
+# a reason, an owner and an expiry date. Repo-wide exclusions below each have a reason.
+directory:
+  - .
+framework:
+  - dockerfile
+  - kubernetes
+  - github_actions
+compact: true
+quiet: true
+skip-path:
+  # Deliberately insecure baseline for the before/after comparison and the Phase 8 demo; never built in CI.
+  # Owner: np03042021. Expires: never (it exists to fail).
+  - docker/
+  # Raw Helm templates aren't valid YAML; ci.yml renders the chart to target/chart/rendered.yaml and that is scanned.
+  - charts/app/templates
