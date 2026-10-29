@@ -7,7 +7,7 @@ image:
   # Deployed by digest, never by tag. release.yml (Phase 6) writes the digest of the image it just
   # built and scanned; Argo CD then deploys exactly those bytes. Empty until the first release,
   # so the chart refuses to render (fail closed) rather than deploy an unknown image.
-  digest: ""
+  digest: "sha256:146b6b6b161f35a9a085f0ca4e280a3454d107dfb380f38f1ad2673ba6aeacb1"
   # With a digest the bytes can't change; Always only re-checks the manifest and re-authorises the pull.
   pullPolicy: Always
 
