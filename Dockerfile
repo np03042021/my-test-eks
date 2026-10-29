@@ -10,7 +10,7 @@
 ############################ build stage (discarded) ############################
 # Runs on the build machine's native platform: the jar is platform-independent, so there is no slow
 # emulation for the Maven build. Only the runtime stage targets linux/amd64.
-FROM --platform=$BUILDPLATFORM maven:3.10.0-eclipse-temurin-21-noble@sha256:be0d4ea47a9844740bd691de7af8c1e51e861bb7284068e055f383da5c6ccdb7 AS build
+FROM --platform=$BUILDPLATFORM maven:3-eclipse-temurin-26-noble@sha256:69a6c37f0a91fca2c9d0cdd684c9c0ea7b1bc00d4196749c24440b2e02ad163d AS build
 WORKDIR /workspace
 
 # Official Maven image at the same version mvnw pins locally and in CI (3.10.0), so no wrapper download
