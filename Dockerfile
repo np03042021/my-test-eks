@@ -33,7 +33,7 @@ RUN java -Djarmode=tools -jar target/secure-paved-road-app-*.jar \
 # little for an attacker to use and very little for scanners to flag. The :nonroot variant has UID 65532.
 # Debian 13, not 12: on 2026-10-29 the debian12 variant had 10 fixable HIGH/CRITICAL CVEs (fails the CI gate);
 # debian13 had 0 fixable (4 HIGH in libuuid1 with no Debian fix yet).
-FROM gcr.io/distroless/java21-debian13:nonroot@sha256:a2aeb5a7a714cfe928b31fdf67b2d23f503ea6b9612705af062de22e0c50ba77
+FROM gcr.io/distroless/java21-debian13:nonroot@sha256:b22857e939bd95abd69d9d747f0421a274f9f70855ecfc335f7d97f6eeef578d
 
 LABEL org.opencontainers.image.title="secure-paved-road-app" \
       org.opencontainers.image.description="Demo service for the Secure Paved Road on EKS" \
