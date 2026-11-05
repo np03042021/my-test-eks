@@ -159,7 +159,7 @@ jobs:
           helm template spr-app charts/app --namespace spr-app \
             --set image.digest="sha256:$(printf '0%.0s' {1..64})" > target/chart/rendered.yaml
       - name: Checkov (Dockerfile, rendered chart, workflows)
-        uses: bridgecrewio/checkov-action@c3e106d5f8f4253a6de5110efb41a080f83db294 # v12.3135.0 (checkov 3.3.30)
+        uses: bridgecrewio/checkov-action@c10e2438743528f9e4549758fad8b7a62052541d # v12.3135.0 (checkov 3.3.30)
         with:
           config_file: .checkov.yaml
           output_format: cli,sarif
